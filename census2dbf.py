@@ -226,6 +226,31 @@ def new_file_ending(filename, new):
         return filename + new
 
 
+def convert_csv_to_dbf(input_file, output_file, print_data_dict=False):
+    input_file = open(input_file, 'r')
+    output_file = open(output_file, 'w')
+    _convert_csv_to_dbf(input_file, output_file,
+                        print_data_dict=print_data_dict)
+
+
+def _convert_csv_to_dbf(input_file, output_file, print_data_dict=False):
+
+    if output_file is None:
+        name = new_file_ending(input_file.name, '.dbf')
+        output_file = open(name, 'w')
+
+    # Parse the csv.
+    parser = csv_parser(handle=input_file)
+    header, fieldspecs, records = parser.parse()
+
+    # Write to dbf.
+    dbfwriter(output_file, header, fieldspecs, records)
+
+    if print_data_dict:
+        parser.write_dd(input_file.name, output_file)
+
+
+
 def main(argv=None):
     description = 'Convert CSV to DBF.'
     parser = argparse.ArgumentParser(description=description)
@@ -234,22 +259,13 @@ def main(argv=None):
     parser.add_argument('--dd', default=False, required=False, action='store_true', help='output a data dictionary made from the header')
 
     args = parser.parse_args()
-
+    input_file = args.input
     output_file = args.output
-    if output_file is None:
-        name = new_file_ending(args.input.name, '.dbf')
-        output_file = open(name, 'w')
+    _convert_csv_to_dbf(input_file, output_file,
+                        print_data_dict=args.dd)
 
-    # Parse the csv.
-    parser = csv_parser(handle=args.input)
-    header, fieldspecs, records = parser.parse()
-
-    # Write to dbf.
-    dbfwriter(output_file, header, fieldspecs, records)
-
-    if args.dd:
-        parser.write_dd(args.input.name, output_file)
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
