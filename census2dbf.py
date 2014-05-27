@@ -14,6 +14,7 @@ import re
 import struct
 import datetime
 import itertools
+from operator import itemgetter
 
 help_message = '''Convert US Census CSVs to DBF.'''
 
@@ -21,6 +22,10 @@ help_message = '''Convert US Census CSVs to DBF.'''
 class Usage(Exception):
     def __init__(self, msg):
         self.msg = msg
+
+
+def collect(l, index):
+    return map(itemgetter(index), l)
 
 
 def dbfwriter(f, fieldnames, fieldspecs, records):
@@ -226,22 +231,64 @@ def new_file_ending(filename, new):
         return filename + new
 
 
-def convert_csv_to_dbf(input_file, output_file, print_data_dict=False):
+def convert_csv_to_dbf(input_file, output_file, mapping_dbf,
+                       mapping_from, mapping_to, print_data_dict=False):
     input_file = open(input_file, 'r')
     output_file = open(output_file, 'w')
-    _convert_csv_to_dbf(input_file, output_file,
-                        print_data_dict=print_data_dict)
+    mapping_file = open(mapping_dbf, 'r')
+    _convert_csv_to_dbf(input_file, output_file, mapping_file,
+                        mapping_from, mapping_to, print_data_dict=print_data_dict)
 
 
-def _convert_csv_to_dbf(input_file, output_file, print_data_dict=False):
+def _find_field_index_dbf(fields, name):
+    """
+    Return the index of the field with the given name
+    If not found, raise an exception
+    """
+    for i, field_info in enumerate(fields):
+        if field_info[0] == name:
+            return i
+    raise ValueError('Field %s not found in data' % name)
 
+
+def _convert_csv_to_dbf(input_file, output_file, mapping_file=None,
+                        mapping_from=None, mapping_to=None, print_data_dict=False):
     if output_file is None:
         name = new_file_ending(input_file.name, '.dbf')
         output_file = open(name, 'w')
 
+    if mapping_file:
+        #Read this file and map it
+        try:
+            from shapefile import Reader
+        except ImportError:
+            print "pyshp required for mapping feature"
+            raise
+        dbfr = Reader(dbf=mapping_file)
+        #find field thath as the mapping_from name
+        #use -1 because pyshp adds a column for flagging deleted fields
+        name_i = _find_field_index_dbf(dbfr.fields, mapping_from) - 1
+        map_values = [rec[name_i] for rec in dbfr.iterRecords()]
+
     # Parse the csv.
     parser = csv_parser(handle=input_file)
     header, fieldspecs, records = parser.parse()
+    if mapping_file:
+        csv_name_i = header.index(mapping_to)
+        #be conservative and make sure they match
+        if len(records) != len(map_values):
+            raise Exception('mapping records lengths must match')
+        #reorder the records so they match the original
+        #This will reaise an error if something does not map
+        mapped_records = [None]*len(map_values)
+        for i in xrange(len(map_values)):
+            mv = map_values[i]
+            try:
+                old_i = collect(records, csv_name_i).index(mv)
+            except ValueError:
+                raise ValueError('Could not find record name %s in csv' % mv)
+            mapped_records[i] = records[old_i]
+        records = mapped_records
 
     # Write to dbf.
     dbfwriter(output_file, header, fieldspecs, records)
@@ -250,22 +297,23 @@ def _convert_csv_to_dbf(input_file, output_file, print_data_dict=False):
         parser.write_dd(input_file.name, output_file)
 
 
-
 def main(argv=None):
     description = 'Convert CSV to DBF.'
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument('--input', type=argparse.FileType('r', 0), help='input csv', required=True)
     parser.add_argument('--output', type=argparse.FileType('w', 0), help='output dbf file', required=False)
+    parser.add_argument('--mapdbf', type=argparse.FileType('r', 0), help='original dbf file used for joining', required=False)
+    parser.add_argument('--mapfrom', type=str, help='when mapping, this is the field name matched in the dbf', required=False)
+    parser.add_argument('--mapto', type=str, help='when mapping, this is the field name matched in the csv', required=False)
     parser.add_argument('--dd', default=False, required=False, action='store_true', help='output a data dictionary made from the header')
 
     args = parser.parse_args()
     input_file = args.input
     output_file = args.output
-    _convert_csv_to_dbf(input_file, output_file,
+    _convert_csv_to_dbf(input_file, output_file, args.mapdbf,
+                        args.mapfrom, args.mapto,
                         print_data_dict=args.dd)
-
 
 
 if __name__ == "__main__":
     sys.exit(main())
-
